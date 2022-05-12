@@ -238,5 +238,213 @@ export const NovelController = {
             res.status(500).json(ResponseDetail(500, { message: "Lỗi lấy thông tin truyện" }))
         }
     },
+    GetChapterByNumber: async (req, res) => {
+        try {
+            const chapNumber = req.params.chapNumber;
+            const url = req.params.url
+
+            const token = req.headers.authorization?.split(" ")[1];
+            var username;
+            if (token) {
+                username = jwt_decode(token).sub
+            }
+
+            const novel = await Novel.findOne({ url: url })
+            if (novel) {
+                Chapter.findOne({ dautruyenId: novel.id, chapnumber: chapNumber })
+                    .then(
+                        async(result) => {
+                            if (username) {
+                                const user = await User.findOne({ username })
+                                if (user) {
+                                    let reading = await Reading.findOne({
+                                        dautruyenId: novel.id,
+                                        userId: user.id
+                                    })
+                                    if (reading) {
+                                        reading.chapNumber = chapNumber
+                                    }
+                                    else {
+                                        reading = await new Reading({
+                                            dautruyenId: novel.id,
+                                            userId: user.id,
+                                            chapNumber
+                                        })
+                                    }
+                                    await reading.save()
+                                }
+                            }
+                            return res.status(200).json(ResponseData(200, result))
+                        }
+                    ).
+                    catch(err => {
+                        console.log(err)
+                        return res.status(400).json(ResponseDetail(500, { message: "Không tìm thấy chap" }))
+                    })
+            }
+            else {
+                return res.status(400).json(ResponseDetail(500, { message: "Không tìm thấy truyện" }))
+            }
+        } catch (error) {
+            console.log(error)
+            res.status(500).json(ResponseDetail(500, { message: "Lỗi lấy thông tin chap" }))
+        }
+    },
+
+    GetChapterByUrl: async (req, res) => {
+        try {
+            const url = req.params.url;
+            const page = req.query.page || 0
+            const size = req.query.size || 1000
+            const novel = await Novel.findOne({ url: url })
+            if (novel) {
+                Chapter.find({ dautruyenId: novel.id })
+                    .limit(size)
+                    .skip((page) * size)
+                    .sort({ chapnumber: 1 })
+                    .select({ chapnumber: 1, tenchap: 1 }).then(
+                        result => {
+                            return res.status(200).json(ResponseData(200, result))
+                        }
+                    ).
+                    catch(err => {
+                        console.log(err)
+                        return res.status(400).json(ResponseDetail(500, { message: "Không tìm thấy chap" }))
+                    })
+            }
+            else {
+                return res.status(400).json(ResponseDetail(500, { message: "Không tìm thấy truyện" }))
+            }
+        } catch (error) {
+            console.log(error)
+            res.status(500).json(ResponseDetail(500, { message: "Lỗi lấy thông tin chap" }))
+        }
+    }
+
+    ,
+    SetReading: async (req, res) => {
+        try {
+            const chapNumber = req.body.chapNumber
+            const url = req.body.url
+            const token = req.headers.authorization?.split(" ")[1];
+            const decode = jwt_decode(token)
+
+            if (!decode.sub) {
+                return res.status(500).json(ResponseDetail(500, { message: "Lỗi token" }))
+            }
+            const username = decode.sub;
+            User.findOne({ username: username })
+                .then(async (result) => {
+                    const novel = await Novel.findOne({ url: url })
+                    if (novel) {
+
+                        let reading = await Reading.findOne({
+                            dautruyenId: novel.id,
+                            userId: result.id
+                        })
+                        if (reading) {
+                            reading.chapNumber = chapNumber
+                        }
+                        else {
+                            reading = await new Reading({
+                                dautruyenId: novel.id,
+                                userId: result.id,
+                                chapNumber
+                            })
+                        }
+                        const temp = await reading.save()
+                        return res.status(200).json(ResponseData(200, temp))
+                    }
+                    return res.status(500).json(ResponseDetail(500, { message: "Không tìm thấy tài khoản" }))
+                })
+                .catch(err => {
+                    return res.status(500).json(ResponseDetail(500, { message: "Lỗi tìm tài khoản" }))
+                })
+        } catch (error) {
+            console.log(error)
+            return res.status(500).json(ResponseDetail(500, { message: "Lỗi lấy thông tin chap" }))
+        }
+    },
+    GetReadings: async (req, res) => {
+        try {
+            const token = req.headers.authorization?.split(" ")[1];
+            const decode = jwt_decode(token)
+
+            if (!decode.sub) {
+                return res.status(500).json(ResponseDetail(500, { message: "Lỗi token" }))
+            }
+            const username = decode.sub;
+            const user = await User.findOne({ username: username })
+            if (user) {
+                let readings = await Reading.find({ userId: user._id }).populate('dautruyenId').populate("userId")
+                
+                readings =await Promise.all(readings.map(async(item)=>{
+                    let sochap = await Chapter.countDocuments({dautruyenId:item.dautruyenId.id})
+                    return {
+                        tentruyen:item.dautruyenId.tentruyen,
+                        hinhanh:item.dautruyenId.hinhanh,
+                        chapnumber:item.chapNumber,
+                        url:item.dautruyenId.url,
+                        sochap
+                    }
+                })) 
+                
+                return res.status(200).json(ResponseData(200, readings))
+            } else {
+                return res.status(500).json(ResponseDetail(500, { message: "Lỗi tìm tài khoản" }))
+            }
+        } catch (error) {
+            console.log(error)
+            return res.status(500).json(ResponseDetail(500, { message: "Lỗi lấy thông tin chap" }))
+        }
+    },
+
+    GetNewestChapter: async (req, res) => {
+        try {
+            const page = req.query.page || 0
+            const size = req.query.size || 10
+            let chaps = await Chapter.find().populate('dautruyenId').limit(size).sort({ updateAt: -1 })
+            chaps = chaps.map(item => {
+                return {
+                    theloai: item.dautruyenId.theloai
+                    , tentruyen: item.dautruyenId.tentruyen,
+                    tenchap: item.tenchap, tacgia: item.dautruyenId.tacgia,
+                    nguoidangtruyen: item.dautruyenId.nguoidangtruyen?.tenhienthi,
+                    updateAt: item.updateAt,
+                    url: item.dautruyenId.url,
+                    chapnumber: item.chapnumber
+                }
+            })
+            if (chaps) {
+                return res.status(200).json(ResponseData(200, chaps))
+            }
+            return res.status(200).json(ResponseData(200, []))
+        }
+        catch (err) {
+            console.log(err)
+            return res.status(500).json(ResponseDetail(500, { message: "Lỗi lấy thông tin chap" }))
+        }
+    },
+
+    GetReadingsDefault: async (req, res) => {
+        try {
+            const page = req.query.page || 0
+            const size = req.query.size || 10
+            var novelReading = await Novel.find().limit(size)
+            novelReading = await Promise.all(novelReading.map(async (item) => {
+                let sochap = await Chapter.countDocuments({ dautruyenId: item._id })
+                return { tentruyen: item.tentruyen, hinhanh: item.hinhanh, chapnumber: 1, url: item.url, sochap }
+            }))
+            if (novelReading) {
+                return res.status(200).json(ResponseData(200, novelReading))
+            }
+            return res.status(200).json(ResponseData(200, []))
+        }
+        catch (err) {
+            console.log(err)
+            return res.status(500).json(ResponseDetail(500, { message: "Lỗi lấy thông tin chap" }))
+        }
+    }
+
 
 }
